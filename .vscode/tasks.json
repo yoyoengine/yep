@@ -1,0 +1,38 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "create-build-dir",
+            "type": "shell",
+            "command": "mkdir -p build",
+            "problemMatcher": [],
+            "runOnce": true
+        },
+        {
+            "label": "configure",
+            "type": "shell",
+            "command": "cmake -S . -B build",
+            "dependsOn": ["create-build-dir"],
+            "problemMatcher": []
+        },
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "cmake --build build",
+            "dependsOn": ["configure"],
+            "problemMatcher": [],
+            "group": {
+            "kind": "build",
+            "isDefault": true
+            }
+        },
+        {
+            "label": "run",
+            "type": "shell",
+            "command": "./build/yep",
+            "dependsOn": ["build"],
+            "problemMatcher": [],
+            "group": "none"
+        }
+    ]
+}
