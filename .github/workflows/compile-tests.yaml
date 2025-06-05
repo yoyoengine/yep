@@ -8,6 +8,9 @@ on:
     branches:
       - main
 
+env:
+  CMAKE_FLAGS: -DSDL_UNIX_CONSOLE_BUILD=ON
+
 jobs:
   build-linux:
     name: Build with ${{ matrix.compiler }}
@@ -46,7 +49,7 @@ jobs:
         run: |
           mkdir -p ${{ github.workspace }}/build
           cd ${{ github.workspace }}/build
-          CC=${{ matrix.cc }} cmake ..
+          CC=${{ matrix.cc }} cmake ${{ env.CMAKE_FLAGS }} ..
 
       - name: Build
         run: |
