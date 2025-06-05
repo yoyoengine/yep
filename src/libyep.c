@@ -1,5 +1,5 @@
 /*
-    This file is a part of yoyoengine. (https://github.com/zoogies/yoyoengine)
+    This file is a part of yoyoengine. (https://github.com/yoyoengine/yoyoengine)
     Copyright (C) 2023-2025  Ryan Zmuda
 
     Licensed under the MIT license. See LICENSE file in the project root for details.
@@ -7,17 +7,11 @@
 
 #include <stdbool.h>
 
-#include <SDL_image.h>
-#include <SDL_mixer.h>
+#include <zlib.h>       // zlib compression
+#include <SDL3/SDL.h>   // dir traversal
 
-#include <jansson.h> // jansson
-
-#include <yoyoengine/yep.h>
-#include <yoyoengine/engine.h>
-#include <yoyoengine/logging.h>
-#include <yoyoengine/filesystem.h>
-
-#include <zlib.h>   // zlib compression
+#include "yepfs.h"
+#include "libyep.h"
 
 // holds the reference to the currently open yep file
 char* yep_file_path = NULL;
@@ -26,6 +20,37 @@ uint16_t file_entry_count = 0;
 uint16_t file_version_number = 0;
 
 struct yep_pack_list yep_pack_list;
+
+/*
+    Trivial temp logger
+*/
+void yep_logf(enum yep_log_level level, const char *fmt, ...) {
+    // Print the level prefix
+    switch(level) {
+        case yep_log_debug:
+            printf("[DEBUG] ");
+            break;
+        case yep_log_info:
+            printf("[INFO] ");
+            break;
+        case yep_log_warning:
+            printf("[WARN] ");
+            break;
+        case yep_log_error:
+            printf("[ERROR] ");
+            break;
+    }
+
+    // Print the actual message
+    va_list args;
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
+}
+
+/*
+    Equivalent to ye_path to help get paths on disk
+*/
 
 /*
     ========================= COMPRESSION IMPLEMENTATION =========================
@@ -71,7 +96,7 @@ int decompress_data(const char* input, size_t input_size, char** output, size_t 
 
     int inflate_result = inflateInit(&stream);
     if (inflate_result != Z_OK) {
-        ye_logf(error, "inflateInit error: %s\n", zError(inflate_result));
+        yep_logf(yep_log_error, "inflateInit error: %s\n", zError(inflate_result));
         return -1;
     }
 
@@ -91,7 +116,7 @@ int decompress_data(const char* input, size_t input_size, char** output, size_t 
     if (res) {
         free(*output);
         inflateEnd(&stream);
-        ye_logf(error,"Error decompressing data: %s\n",zError(res));
+        yep_logf(yep_log_error,"Error decompressing data: %s\n",zError(res));
         return -1;
     }
 
@@ -99,7 +124,7 @@ int decompress_data(const char* input, size_t input_size, char** output, size_t 
     inflateEnd(&stream);
 
     if(output_size != stream.total_out){
-        ye_logf(error,"Error: decompressed size does not match expected size\n");
+        yep_logf(yep_log_error,"Error: decompressed size does not match expected size\n");
         return -1;
     }
 
@@ -114,35 +139,35 @@ bool is_dir_outofdate(const char *target_directory, const char *yep_file_path){
     
     SDL_PathInfo dir_info;
     // check if the directory exists
-    if(!ye_get_path_info(target_directory, &dir_info)){
-        ye_logf(error,"Error: directory %s does not exist\n", target_directory);
+    if(!yep_get_path_info(target_directory, &dir_info)){
+        yep_logf(yep_log_error,"Error: directory %s does not exist\n", target_directory);
         return false;
     }
     // if the directory is not a directory, return false
     if(dir_info.type != SDL_PATHTYPE_DIRECTORY){
-        ye_logf(error,"Error: %s is not a directory\n", target_directory);
+        yep_logf(yep_log_error,"Error: %s is not a directory\n", target_directory);
         return false;
     }
 
     // check if the yep file exists
     SDL_PathInfo yep_info;
-    if(!ye_get_path_info(yep_file_path, &yep_info)){
-        ye_logf(error,"Error: yep file %s does not exist\n", yep_file_path);
+    if(!yep_get_path_info(yep_file_path, &yep_info)){
+        yep_logf(yep_log_error,"Error: yep file %s does not exist\n", yep_file_path);
         return false;
     }
     // if the yep file is not a file, return false
     if(yep_info.type != SDL_PATHTYPE_FILE){
-        ye_logf(error,"Error: %s is not a file\n", yep_file_path);
+        yep_logf(yep_log_error,"Error: %s is not a file\n", yep_file_path);
         return false;
     }
 
     // if the directory is newer than the yep file, return true
     if(dir_info.modify_time > yep_info.modify_time){
-        ye_logf(debug,"Directory %s is newer than yep file %s\n", target_directory, yep_file_path);
+        yep_logf(yep_log_debug,"Directory %s is newer than yep file %s\n", target_directory, yep_file_path);
         return true;
     }
 
-    ye_logf(debug,"Directory %s is not newer than yep file %s\n", target_directory, yep_file_path);
+    yep_logf(yep_log_debug,"Directory %s is not newer than yep file %s\n", target_directory, yep_file_path);
     return false;
 }
 
@@ -188,7 +213,7 @@ bool _yep_open_file(const char *file){
 
     yep_file = fopen(file, "rb");
     if (yep_file == NULL) {
-        ye_logf(error,"Error opening yep file\n");
+        yep_logf(yep_log_error,"Error opening yep file\n");
         return false;
     }
 
@@ -205,7 +230,7 @@ bool _yep_open_file(const char *file){
     fread(&file_entry_count, sizeof(uint16_t), 1, yep_file);
 
     if(file_version_number != YEP_CURRENT_FORMAT_VERSION){
-        ye_logf(error,"Error: file version number (%d) does not match current version number (%d)\n", file_version_number, YEP_CURRENT_FORMAT_VERSION);
+        yep_logf(yep_log_error,"Error: file version number (%d) does not match current version number (%d)\n", file_version_number, YEP_CURRENT_FORMAT_VERSION);
         return false;
     }
 
@@ -269,7 +294,7 @@ bool _yep_seek_header(const char *handle, char *name, uint32_t *offset, uint32_t
 
 struct yep_data_info yep_extract_data(const char *file, const char *handle){
     if(!_yep_open_file(file)){
-        ye_logf(warning,"Error opening yep file %s\n", file);
+        yep_logf(yep_log_warning,"Error opening yep file %s\n", file);
         return (struct yep_data_info){.data = NULL, .size = 0};
     }
 
@@ -287,7 +312,7 @@ struct yep_data_info yep_extract_data(const char *file, const char *handle){
 
     // try to get our header
     if(!_yep_seek_header(handle, name, &offset, &size, &compression_type, &uncompressed_size, &data_type)){
-        ye_logf(warning,"Handle \"%s\" does not exist in yep file %s\n", handle, file);
+        yep_logf(yep_log_warning,"Handle \"%s\" does not exist in yep file %s\n", handle, file);
         return (struct yep_data_info){.data = NULL, .size = 0};
     }
 
@@ -317,7 +342,7 @@ struct yep_data_info yep_extract_data(const char *file, const char *handle){
     if(compression_type == YEP_COMPRESSION_ZLIB){
         char *decompressed_data;
         if(decompress_data(data, size, &decompressed_data, uncompressed_size) != 0){
-            ye_logf(warning,"!!!Error decompressing data!!!\n");
+            yep_logf(yep_log_warning,"!!!Error decompressing data!!!\n");
             return (struct yep_data_info){.data = NULL, .size = 0};
         }
 
@@ -345,7 +370,7 @@ struct yep_data_info yep_extract_data(const char *file, const char *handle){
 }
 
 void yep_initialize(){
-    ye_logf(info,"Initializing yep subsystem...\n");
+    yep_logf(yep_log_info,"Initializing yep subsystem...\n");
     yep_pack_list.entry_count = 0;
 }
 
@@ -362,11 +387,11 @@ void yep_shutdown(){
         }
     }
 
-    ye_logf(info,"Shutting down yep subsystem...\n");
+    yep_logf(yep_log_info,"Shutting down yep subsystem...\n");
 }
 
 // forward decl
-void _ye_walk_directory_v2(char *dir_path);
+void _yep_walk_directory_v2(char *dir_path);
 
 // Global variable to store the original root directory path for relative path calculation
 static char *yep_pack_root_path = NULL;
@@ -379,8 +404,8 @@ static SDL_EnumerationResult SDLCALL _recurse_dir_callback(void *userdata, const
 
     // Check if path is a file
     SDL_PathInfo path_info;
-    if (!ye_get_path_info(full_path, &path_info)) {
-        ye_logf(error,"yep traverse: Error getting path info for file %s\n", full_path);
+    if (!yep_get_path_info(full_path, &path_info)) {
+        yep_logf(yep_log_error,"yep traverse: Error getting path info for file %s\n", full_path);
         return SDL_ENUM_CONTINUE;
     }
     if (path_info.type == SDL_PATHTYPE_FILE) {
@@ -396,7 +421,7 @@ static SDL_EnumerationResult SDLCALL _recurse_dir_callback(void *userdata, const
                     relative_path++;
                 }
             } else {
-                ye_logf(error,"Error: file %s is not within the root directory %s\n", full_path, yep_pack_root_path);
+                yep_logf(yep_log_error,"Error: file %s is not within the root directory %s\n", full_path, yep_pack_root_path);
                 return SDL_ENUM_CONTINUE;
             }
         } else {
@@ -406,7 +431,7 @@ static SDL_EnumerationResult SDLCALL _recurse_dir_callback(void *userdata, const
 
         // if the relative path plus its null terminator is greater than 64 bytes, we reject packing this and alert the user
         if(strlen(relative_path) + 1 > 64){
-            ye_logf(error,"Error: file %s has a relative path that is too long to pack into a yep file\n", full_path);
+            yep_logf(yep_log_error,"Error: file %s has a relative path that is too long to pack into a yep file\n", full_path);
             return SDL_ENUM_CONTINUE;
         }
 
@@ -432,9 +457,9 @@ static SDL_EnumerationResult SDLCALL _recurse_dir_callback(void *userdata, const
     }
     else if (path_info.type == SDL_PATHTYPE_DIRECTORY) {
         // If it's a directory, recurse into it
-        _ye_walk_directory_v2(full_path);
+        _yep_walk_directory_v2(full_path);
     } else {
-        ye_logf(debug,"yep traverse: Skipping non-file path %s\n", full_path);
+        yep_logf(yep_log_debug,"yep traverse: Skipping non-file path %s\n", full_path);
     }
 
     return SDL_ENUM_CONTINUE;
@@ -443,16 +468,16 @@ static SDL_EnumerationResult SDLCALL _recurse_dir_callback(void *userdata, const
 /*
     Recursively walk the target pack directory and create a LL of files to be packed
 */
-void _ye_walk_directory_v2(char *dir_path) {
+void _yep_walk_directory_v2(char *dir_path) {
     SDL_PathInfo path_info;
-    if(!ye_get_path_info(dir_path, &path_info)) {
-        ye_logf(error,"yep traverse: Error getting path info for directory %s\n", dir_path);
+    if(!yep_get_path_info(dir_path, &path_info)) {
+        yep_logf(yep_log_error,"yep traverse: Error getting path info for directory %s\n", dir_path);
         return;
     }
 
     // Check if the path is a directory
     if (path_info.type != SDL_PATHTYPE_DIRECTORY) {
-        ye_logf(error,"yep traverse: Path %s is not a directory\n", dir_path);
+        yep_logf(yep_log_error,"yep traverse: Path %s is not a directory\n", dir_path);
         return;
     }
 
@@ -525,7 +550,7 @@ void write_pack_file(FILE *pack_file) {
 
         FILE *file_to_write = fopen(itr->fullpath, "rb");
         if (file_to_write == NULL) {
-            ye_logf(error,"Error opening yep file to pack yep: %s\n", itr->fullpath);
+            yep_logf(yep_log_error,"Error opening yep file to pack yep: %s\n", itr->fullpath);
             exit(1);
         }
 
@@ -600,18 +625,18 @@ void write_pack_file(FILE *pack_file) {
 }
 
 bool _yep_pack_directory(char *directory_path, char *output_name){
-    ye_logf(debug,"Packing directory %s...\n", directory_path);
+    yep_logf(yep_log_debug,"Packing directory %s...\n", directory_path);
 
     // Set the root path for relative path calculation
     yep_pack_root_path = directory_path;
 
     // call walk directory (first arg is root, second is current - this is for recursive relative path knowledge)
-    _ye_walk_directory_v2(directory_path);
+    _yep_walk_directory_v2(directory_path);
 
     // Clear the root path after traversal
     yep_pack_root_path = NULL;
 
-    ye_logf(debug,"Built pack list...\n");
+    yep_logf(yep_log_debug,"Built pack list...\n");
 
     // print out all the LL nodes
     // struct yep_header_node *itr = yep_pack_list.head;
@@ -621,7 +646,7 @@ bool _yep_pack_directory(char *directory_path, char *output_name){
         // itr = itr->next;
     // }
 
-    ye_logf(debug,"Detected %d entries\n", yep_pack_list.entry_count);
+    yep_logf(yep_log_debug,"Detected %d entries\n", yep_pack_list.entry_count);
 
     /*
         Now, we know exactly the size of our entry list, so we can write the headers for each
@@ -631,7 +656,7 @@ bool _yep_pack_directory(char *directory_path, char *output_name){
     // open the output file
     FILE *file = fopen(output_name, "wb");
     if (file == NULL) {
-        ye_logf(error,"Error opening yep file %s\n", output_name);
+        yep_logf(yep_log_error,"Error opening yep file %s\n", output_name);
         return false;
     }
 
@@ -643,7 +668,7 @@ bool _yep_pack_directory(char *directory_path, char *output_name){
     uint16_t entry_count = yep_pack_list.entry_count;
     fwrite(&entry_count, sizeof(uint16_t), 1, file);
 
-    ye_logf(debug,"Writing headers...\n");
+    yep_logf(yep_log_debug,"Writing headers...\n");
 
     // write the headers
     struct yep_header_node *itr = yep_pack_list.head;
@@ -676,27 +701,27 @@ bool _yep_pack_directory(char *directory_path, char *output_name){
         itr = itr->next;
     }
 
-    ye_logf(debug,"Writing data...\n");
+    yep_logf(yep_log_debug,"Writing data...\n");
 
     // write the data
     write_pack_file(file);
 
-    ye_logf(debug,"Done!\n");
+    yep_logf(yep_log_debug,"Done!\n");
 
     return true;
 }
 
 bool yep_force_pack_directory(char *directory_path, char *output_name){
-    ye_logf(debug,"Forcing pack of directory \"%s\"...\n", directory_path);
+    yep_logf(yep_log_debug,"Forcing pack of directory \"%s\"...\n", directory_path);
     return _yep_pack_directory(directory_path, output_name);
 }
 
 bool yep_pack_directory(char *directory_path, char *output_name){
     if(is_dir_outofdate(directory_path, output_name)){
-        ye_logf(debug,"Target directory \"%s\" is out of date, packing...\n", directory_path);
+        yep_logf(yep_log_debug,"Target directory \"%s\" is out of date, packing...\n", directory_path);
         return _yep_pack_directory(directory_path, output_name);
     } else {
-        ye_logf(debug,"Target directory \"%s\" is up to date, skipping...\n", directory_path);
+        yep_logf(yep_log_debug,"Target directory \"%s\" is up to date, skipping...\n", directory_path);
         return true;
     }
 }
@@ -720,7 +745,7 @@ struct yep_data_info _yep_misc(const char *handle, const char *file){
     // get and validate the data
     struct yep_data_info data = yep_extract_data(file, handle);
     if(data.data == NULL){
-        ye_logf(error,"Error: could not get misc data for %s\n", handle);
+        yep_logf(yep_log_error,"Error: could not get misc data for %s\n", handle);
         return data;
     }
 
@@ -728,222 +753,18 @@ struct yep_data_info _yep_misc(const char *handle, const char *file){
     return data;
 }
 
-SDL_Surface * _yep_image(const char *handle, const char *path){
-    // load the data
-    struct yep_data_info data = _yep_misc(handle, path);
+// /*
+//     Accessor functions that abstract the file they come from
+// */
 
-    // if the data is null, we load the missing texture
-    if(data.data == NULL || data.size == 0){
-        return yep_engine_resource_image("missing.png");
-    }
+// struct yep_data_info yep_resource_misc(const char *handle){
+//     return _yep_misc(handle, yep_path("resources.yep"));
+// }
 
-    // create the surface
-    // TODO: MIGRATION: might be the wrong IO loader
-    SDL_Surface *surface = IMG_Load_IO(SDL_IOFromMem(data.data, data.size), 1);
-    if(surface == NULL){
-        ye_logf(error,"Error: could not create surface for %s\n", handle);
-        return NULL;
-    }
+// /*
+//     Just for ease of use (who cares about LOC) lets provide some accessors for engine resources
+// */
 
-    // free the data
-    free(data.data);
-
-    // return the surface
-    return surface;
-}
-
-json_t * _yep_json(const char *handle, const char *path){
-    // load the data
-    struct yep_data_info data = _yep_misc(handle, path);
-
-    // create the json
-    json_t *json = json_loadb(data.data, data.size, 0, NULL);
-    if(json == NULL){
-        ye_logf(error,"Error: could not create json for %s\n", handle);
-        return NULL;
-    }
-
-    // free the data
-    free(data.data); // PAST RYAN TO FUTURE RYAN: YOU MIGHT NOT HAVE TO FREE THIS BECAUSE
-    // SDL TAKES OWNERSHIP I THINK, YOU NEED TO LOOK IT UP
-
-    // return the json
-    return json;
-}
-
-Mix_Chunk * _yep_audio(const char *handle, const char *path){
-    // load the data
-    struct yep_data_info data = _yep_misc(handle, path);
-
-    // create the chunk
-    Mix_Chunk *chunk = Mix_LoadWAV_IO(SDL_IOFromMem(data.data, data.size), 1);
-    if(chunk == NULL){
-        ye_logf(error,"Error: could not create chunk for %s\n", handle);
-        return NULL;
-    }
-
-    // free the data
-    free(data.data);
-
-    // return the chunk
-    return chunk;
-}
-
-Mix_Music * _yep_music(const char *handle, const char *path){
-    // load the data
-    struct yep_data_info data = _yep_misc(handle, path);
-
-    // create the music
-    Mix_Music *music = Mix_LoadMUS_IO(SDL_IOFromMem(data.data, data.size), 1);
-    if(music == NULL){
-        ye_logf(error,"Error: could not create music for %s\n", handle);
-        return NULL;
-    }
-
-    // free the data
-    // free(data.data); CAUSES PAGE FAULT ON WINDOWS!!!
-
-    // return the music
-    return music;
-}
-
-TTF_Font * _yep_font(const char *handle, const char *path){
-    // load the data
-    struct yep_data_info data = _yep_misc(handle, path);
-
-    // create the font
-    TTF_Font *font = TTF_OpenFontIO(SDL_IOFromMem(data.data, data.size), 1, 1);
-    if(font == NULL){
-        ye_logf(error,"Error: could not create font for %s\n", handle);
-        return YE_STATE.engine.pEngineFont;
-    }
-
-    // free the data
-    // free(data.data);
-    // DO NOT free the data because SDL_RWFromMem takes ownership of the data
-    // at least I think... you should valgrind it because it wont work if you free here
-
-    // return the font
-    return font;
-}
-
-/*
-    Accessor functions that abstract the file they come from
-*/
-
-SDL_Surface * yep_resource_image(const char *handle){
-    return _yep_image(handle, ye_path("resources.yep"));
-}
-
-json_t * yep_resource_json(const char *handle){
-    return _yep_json(handle, ye_path("resources.yep"));
-}
-
-Mix_Chunk * yep_resource_audio(const char *handle){
-    return _yep_audio(handle, ye_path("resources.yep"));
-}
-
-Mix_Music * yep_resource_music(const char *handle){
-    return _yep_music(handle, ye_path("resources.yep"));
-}
-
-TTF_Font * yep_resource_font(const char * handle){
-    return _yep_font(handle, ye_path("resources.yep"));
-}
-
-struct yep_data_info yep_resource_misc(const char *handle){
-    return _yep_misc(handle, ye_path("resources.yep"));
-}
-
-/*
-    Just for ease of use (who cares about LOC) lets provide some accessors for engine resources
-*/
-
-SDL_Surface * yep_engine_resource_image(const char *handle){
-    /*
-        If in editor mode, we need to load from loose file
-    */
-    if(YE_STATE.editor.editor_mode){
-        SDL_Surface *surface = IMG_Load(ye_get_engine_resource_static(handle));
-        if(surface == NULL){
-            ye_logf(error,"Error: could not create surface for %s\n", handle);
-            return NULL;
-        }
-        return surface;
-    }
-    else{
-        return _yep_image(handle, ye_path("engine.yep"));
-    }
-}
-
-json_t * yep_engine_resource_json(const char *handle){
-    /*
-        If in editor mode, we need to load from loose file
-    */
-    if(YE_STATE.editor.editor_mode){
-        json_t *json = json_load_file(ye_get_engine_resource_static(handle), 0, NULL);
-        if(json == NULL){
-            ye_logf(error,"Error: could not create json for %s\n", handle);
-            return NULL;
-        }
-        return json;
-    }
-    else{
-        return _yep_json(handle, ye_path("engine.yep"));
-    }
-}
-
-Mix_Chunk * yep_engine_resource_audio(const char *handle){
-    /*
-        If in editor mode, we need to load from loose file
-    */
-    if(YE_STATE.editor.editor_mode){
-        Mix_Chunk *chunk = Mix_LoadWAV(ye_get_engine_resource_static(handle));
-        if(chunk == NULL){
-            ye_logf(error,"Error: could not create chunk for %s\n", handle);
-            return NULL;
-        }
-        return chunk;
-    }
-    else{
-        return _yep_audio(handle, ye_path("engine.yep"));
-    }
-}
-
-Mix_Music * yep_engine_resource_music(const char *handle){
-    /*
-        If in editor mode, we need to load from loose file
-    */
-    if(YE_STATE.editor.editor_mode){
-        Mix_Music *music = Mix_LoadMUS(ye_get_engine_resource_static(handle));
-        if(music == NULL){
-            ye_logf(error,"Error: could not create music for %s\n", handle);
-            return NULL;
-        }
-        return music;
-    }
-    else{
-        return _yep_music(handle, ye_path("engine.yep"));
-    }
-}
-
-TTF_Font * yep_engine_resource_font(const char * handle){
-    /*
-        If in editor mode, we need to load from loose file
-    */
-    if(YE_STATE.editor.editor_mode){
-        TTF_Font *font = TTF_OpenFont(ye_get_engine_resource_static(handle), 20);
-        if(font == NULL){
-            ye_logf(error,"Error: could not create font for %s\n", handle);
-            return NULL;
-        }
-        return font;
-    }
-    else{
-        return _yep_font(handle, ye_path("engine.yep"));
-    }
-}
-
-struct yep_data_info yep_engine_resource_misc(const char *handle){
-    return _yep_misc(handle, ye_path("engine.yep"));
-}
+// struct yep_data_info yep_engine_resource_misc(const char *handle){
+//     return _yep_misc(handle, yep_path("engine.yep"));
+// }
