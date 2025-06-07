@@ -6,6 +6,10 @@
 */
 
 #include <stdbool.h>
+#include <string.h>     // for strdup, strcmp, etc.
+#include <stdio.h>      // for printf, FILE, etc.
+#include <stdlib.h>     // for malloc, free, etc.
+#include <stdarg.h>     // for va_list, va_start, va_end
 
 #include <zlib.h>       // zlib compression
 #include <SDL3/SDL.h>   // dir traversal
@@ -393,6 +397,15 @@ void yep_shutdown(){
 // forward decl
 void _yep_walk_directory_v2(char *dir_path);
 
+// Function to normalize path separators to forward slashes
+static void normalize_path_separators(char *path) {
+    for (char *p = path; *p; p++) {
+        if (*p == '\\') {
+            *p = '/';
+        }
+    }
+}
+
 // Global variable to store the original root directory path for relative path calculation
 static char *yep_pack_root_path = NULL;
 
@@ -401,6 +414,9 @@ static SDL_EnumerationResult SDLCALL _recurse_dir_callback(void *userdata, const
     
     char full_path[4096];
     snprintf(full_path, sizeof(full_path), "%s%s", dirname, fname);
+    
+    // Normalize path separators in full_path for consistent comparison
+    normalize_path_separators(full_path);
 
     // Check if path is a file
     SDL_PathInfo path_info;
@@ -412,25 +428,44 @@ static SDL_EnumerationResult SDLCALL _recurse_dir_callback(void *userdata, const
         // Calculate the relative path from the original root directory
         char *relative_path;
         if (yep_pack_root_path != NULL) {
+            // Normalize the root path for comparison
+            char normalized_root[4096];
+            strncpy(normalized_root, yep_pack_root_path, sizeof(normalized_root) - 1);
+            normalized_root[sizeof(normalized_root) - 1] = '\0';
+            normalize_path_separators(normalized_root);
+            
             // Calculate relative path from the original root
-            size_t root_len = strlen(yep_pack_root_path);
-            if (strncmp(full_path, yep_pack_root_path, root_len) == 0) {
+            size_t root_len = strlen(normalized_root);
+            if (strncmp(full_path, normalized_root, root_len) == 0) {
                 relative_path = full_path + root_len;
-                // Skip leading slash if present
-                if (*relative_path == '/') {
+                // Skip leading path separator if present
+                if (*relative_path == '/' || *relative_path == '\\') {
                     relative_path++;
                 }
             } else {
-                yep_logf(yep_log_error,"Error: file %s is not within the root directory %s\n", full_path, yep_pack_root_path);
+                yep_logf(yep_log_error,"Error: file %s is not within the root directory %s\n", full_path, normalized_root);
                 return SDL_ENUM_CONTINUE;
             }
         } else {
             // Fallback to old behavior if root path is not set
             relative_path = full_path + strlen(dirname) + 1;
+        }        // Convert backslashes to forward slashes for consistent storage
+        char normalized_relative_path[256];
+        strncpy(normalized_relative_path, relative_path, sizeof(normalized_relative_path) - 1);
+        normalized_relative_path[sizeof(normalized_relative_path) - 1] = '\0';
+        
+        for (char *p = normalized_relative_path; *p; p++) {
+            if (*p == '\\') {
+                *p = '/';
+            }
         }
 
-        // if the relative path plus its null terminator is greater than 64 bytes, we reject packing this and alert the user
-        if(strlen(relative_path) + 1 > 64){
+        // Skip any leading path separators that might still be present
+        char *final_relative_path = normalized_relative_path;
+        while (*final_relative_path == '/' || *final_relative_path == '\\') {
+            final_relative_path++;
+        }        // if the relative path plus its null terminator is greater than 64 bytes, we reject packing this and alert the user
+        if(strlen(final_relative_path) + 1 > 64){
             yep_logf(yep_log_error,"Error: file %s has a relative path that is too long to pack into a yep file\n", full_path);
             return SDL_ENUM_CONTINUE;
         }
@@ -445,8 +480,8 @@ static SDL_EnumerationResult SDLCALL _recurse_dir_callback(void *userdata, const
         node->fullpath = strdup(full_path);
 
         // set the name
-        sprintf(node->name, "%s", relative_path);
-        node->name[strlen(relative_path)] = '\0'; // ensure null termination
+        sprintf(node->name, "%s", final_relative_path);
+        node->name[strlen(final_relative_path)] = '\0'; // ensure null termination
 
         // add the node to the LL
         node->next = yep_pack_list.head;
@@ -627,13 +662,15 @@ void write_pack_file(FILE *pack_file) {
 bool _yep_pack_directory(char *directory_path, char *output_name){
     yep_logf(yep_log_debug,"Packing directory %s...\n", directory_path);
 
-    // Set the root path for relative path calculation
-    yep_pack_root_path = directory_path;
+    // Set the root path for relative path calculation and normalize separators
+    yep_pack_root_path = strdup(directory_path);
+    normalize_path_separators(yep_pack_root_path);
 
     // call walk directory (first arg is root, second is current - this is for recursive relative path knowledge)
     _yep_walk_directory_v2(directory_path);
 
     // Clear the root path after traversal
+    free(yep_pack_root_path);
     yep_pack_root_path = NULL;
 
     yep_logf(yep_log_debug,"Built pack list...\n");
