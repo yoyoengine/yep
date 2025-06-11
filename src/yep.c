@@ -10,7 +10,7 @@
 
 #include "libyep.h"
 
-void print_usage() {
+void print_usage(void) {
     printf("Usage: yep <input_directory> <output_file.yep>\n");
     printf("Pack a directory into a .yep pack file\n\n");
     printf("Arguments:\n");
@@ -20,7 +20,7 @@ void print_usage() {
 
 int main(int argc, char **argv) {
     if (argc != 3) {
-        print_usage(argv[0]);
+        print_usage();
         return 1;
     }
 
