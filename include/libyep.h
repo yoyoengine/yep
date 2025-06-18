@@ -102,6 +102,16 @@ bool yep_pack_directory(char *directory_path, char *output_name);
  */
 bool yep_force_pack_directory(char *directory_path, char *output_name);
 
+/**
+ * @brief Checks if a yep item exists in the file
+ * 
+ * @param file The path to the yep file
+ * @param handle The name of the resource to search for
+ * @return true If the item exists
+ * @return false If the item does not exist
+ */
+bool yep_item_exists(const char *file, const char *handle);
+
 // extract data will call private functions
 // _yep_open_file(char *file); which will open the file into the yep global file pointer
 // _yep_close_file(); which will close the file on shutdown

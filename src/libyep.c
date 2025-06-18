@@ -659,6 +659,29 @@ void write_pack_file(FILE *pack_file) {
     yep_pack_list.entry_count = 0;
 }
 
+bool yep_item_exists(const char* file, const char* handle) {
+    // open the file
+	if(!_yep_open_file(file)){
+		yep_logf(yep_log_warning,"Error opening yep file %s\n", file);
+		return false;
+	}
+
+	// setup the data we will seek out of the yep file
+	char name[64];
+	uint32_t offset;
+	uint32_t size;
+	uint8_t compression_type;
+	uint32_t uncompressed_size;
+	uint8_t data_type;
+
+	// try to get our header
+	if(!_yep_seek_header(handle, name, &offset, &size, &compression_type, &uncompressed_size, &data_type)){
+		return false;
+	}
+
+	return true;
+}
+
 bool _yep_pack_directory(char *directory_path, char *output_name){
     yep_logf(yep_log_debug,"Packing directory %s...\n", directory_path);
 
