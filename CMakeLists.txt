@@ -78,7 +78,7 @@ set(SDL_STATIC_PIC ON CACHE BOOL "Build static libraries with PIC (Position Inde
 FetchContent_Declare(
     SDL3
     GIT_REPOSITORY  https://github.com/libsdl-org/SDL.git
-    GIT_TAG         release-3.2.8
+    GIT_TAG         release-3.4.2
     GIT_PROGRESS    TRUE
     GIT_SHALLOW     TRUE
 )
