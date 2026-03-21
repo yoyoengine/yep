@@ -11,8 +11,8 @@ function(pack_resources INPUT_DIR OUTPUT_FILE TARGET_NAME)
 
     add_custom_command(
         OUTPUT "${OUTPUT_FILE}"
-        COMMAND yep "${INPUT_DIR}" "${OUTPUT_FILE}"
-        DEPENDS ${RESOURCE_INPUT_FILES}
+        COMMAND $<TARGET_FILE:yep> "${INPUT_DIR}" "${OUTPUT_FILE}"
+        DEPENDS yep ${RESOURCE_INPUT_FILES}
         COMMENT "Packing resources from ${INPUT_DIR} to ${OUTPUT_FILE}"
         VERBATIM
     )
