@@ -430,8 +430,7 @@ static SDL_EnumerationResult SDLCALL _recurse_dir_callback(void *userdata, const
         if (yep_pack_root_path != NULL) {
             // Normalize the root path for comparison
             char normalized_root[4096];
-            strncpy(normalized_root, yep_pack_root_path, sizeof(normalized_root) - 1);
-            normalized_root[sizeof(normalized_root) - 1] = '\0';
+            snprintf(normalized_root, sizeof(normalized_root), "%s", yep_pack_root_path);
             normalize_path_separators(normalized_root);
             
             // Calculate relative path from the original root
@@ -451,8 +450,7 @@ static SDL_EnumerationResult SDLCALL _recurse_dir_callback(void *userdata, const
             relative_path = full_path + strlen(dirname) + 1;
         }        // Convert backslashes to forward slashes for consistent storage
         char normalized_relative_path[256];
-        strncpy(normalized_relative_path, relative_path, sizeof(normalized_relative_path) - 1);
-        normalized_relative_path[sizeof(normalized_relative_path) - 1] = '\0';
+        snprintf(normalized_relative_path, sizeof(normalized_relative_path), "%s", relative_path);
         
         for (char *p = normalized_relative_path; *p; p++) {
             if (*p == '\\') {
@@ -480,7 +478,7 @@ static SDL_EnumerationResult SDLCALL _recurse_dir_callback(void *userdata, const
         node->fullpath = strdup(full_path);
 
         // set the name
-        sprintf(node->name, "%s", final_relative_path);
+        snprintf(node->name, 64, "%s", final_relative_path);
         node->name[strlen(final_relative_path)] = '\0'; // ensure null termination
 
         // add the node to the LL
