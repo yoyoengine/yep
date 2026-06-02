@@ -19,6 +19,7 @@
 
 #ifdef _WIN32
     #include <windows.h>
+    #include <sys/stat.h>
     #include <sys/utime.h>
     #include <io.h>
 #else

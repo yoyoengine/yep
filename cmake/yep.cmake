@@ -10,10 +10,22 @@ function(pack_resources INPUT_DIR OUTPUT_FILE TARGET_NAME)
         "${INPUT_DIR}/*"
     )
 
+    # The packer to run is published by yep's CMakeLists.txt via global
+    # properties: the in-tree `yep` target for native builds, or a host-runnable
+    # copy when cross-compiling (the in-tree binary would be a target-platform
+    # executable that cannot run on the build host).
+    get_property(_yep_packer     GLOBAL PROPERTY YEP_PACKER_COMMAND)
+    get_property(_yep_packer_dep GLOBAL PROPERTY YEP_PACKER_DEPEND)
+    if(NOT _yep_packer)
+        # Fallback (e.g. yep.cmake included without yep's CMakeLists setup).
+        set(_yep_packer "$<TARGET_FILE:yep>")
+        set(_yep_packer_dep yep)
+    endif()
+
     add_custom_command(
         OUTPUT "${OUTPUT_FILE}"
-        COMMAND $<TARGET_FILE:yep> "${INPUT_DIR}" "${OUTPUT_FILE}"
-        DEPENDS yep ${RESOURCE_INPUT_FILES}
+        COMMAND "${_yep_packer}" "${INPUT_DIR}" "${OUTPUT_FILE}"
+        DEPENDS ${_yep_packer_dep} ${RESOURCE_INPUT_FILES}
         COMMENT "Packing resources from ${INPUT_DIR} to ${OUTPUT_FILE}"
         VERBATIM
     )

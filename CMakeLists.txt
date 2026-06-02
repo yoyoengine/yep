@@ -12,6 +12,11 @@ include(FetchContent)
 
 option(YEP_BUILD_BIN "Build the yep binary" ON)
 
+# Optional: a prebuilt, host-runnable yep packer to use during cross builds.
+# Leave empty to have this build produce one automatically (see below).
+set(YEP_HOST_EXECUTABLE "" CACHE FILEPATH
+    "Prebuilt host-runnable yep packer to use when cross-compiling (optional)")
+
 # libyep
 add_library(libyep STATIC)
 target_sources(libyep PRIVATE src/yepfs.c src/libyep.c)
@@ -25,6 +30,77 @@ if(YEP_BUILD_BIN)
 
     # we need libyep if we are building the binary
     set(YEP_BUILD_LIBYEP ON CACHE BOOL "Build the libyep library" FORCE)
+
+    # Decide which packer pack_resources() should run, and publish the choice via
+    # global properties. These are visible from the consumer scope (FetchContent
+    # adds yep in a child scope, so a plain variable would not propagate up) and,
+    # unlike a cache entry, they are recomputed every configure so reconfigures
+    # stay consistent.
+    if(NOT CMAKE_CROSSCOMPILING)
+        # Host == target: just run the in-tree binary.
+        set_property(GLOBAL PROPERTY YEP_PACKER_COMMAND "$<TARGET_FILE:yep>")
+        set_property(GLOBAL PROPERTY YEP_PACKER_DEPEND yep)
+    elseif(YEP_HOST_EXECUTABLE)
+        # Consumer supplied a prebuilt host packer.
+        if(NOT EXISTS "${YEP_HOST_EXECUTABLE}")
+            message(FATAL_ERROR
+                "YEP_HOST_EXECUTABLE does not exist: ${YEP_HOST_EXECUTABLE}")
+        endif()
+        set_property(GLOBAL PROPERTY YEP_PACKER_COMMAND "${YEP_HOST_EXECUTABLE}")
+        set_property(GLOBAL PROPERTY YEP_PACKER_DEPEND "")
+    else()
+        # Cross-compiling: the `yep` target above is built for the *target* and
+        # cannot run on the build host. pack_resources() runs the packer at build
+        # time, so build a host-runnable copy via a nested host build.
+        #
+        # ExternalProject_Add launches a fresh CMake that does NOT inherit our
+        # cross toolchain, so it configures for the host; because that nested
+        # build is not cross-compiling, it does not recurse here. If the host
+        # compiler cannot be autodetected (e.g. CC/CXX point at the cross
+        # compiler), set YEP_HOST_C_COMPILER / YEP_HOST_CXX_COMPILER.
+        include(ExternalProject)
+
+        if(CMAKE_HOST_WIN32)
+            set(_yep_host_exe_suffix ".exe")
+        else()
+            set(_yep_host_exe_suffix "")
+        endif()
+
+        # Explicit, generator-independent output location so the host binary
+        # lands at a known path (multi-config generators otherwise nest it under
+        # a per-config subdirectory).
+        set(_yep_host_dir "${CMAKE_CURRENT_BINARY_DIR}/yep_host_tool")
+        set(_yep_host_exe "${_yep_host_dir}/bin/yep${_yep_host_exe_suffix}")
+
+        set(_yep_host_compiler_args "")
+        if(YEP_HOST_C_COMPILER)
+            list(APPEND _yep_host_compiler_args "-DCMAKE_C_COMPILER=${YEP_HOST_C_COMPILER}")
+        endif()
+        if(YEP_HOST_CXX_COMPILER)
+            list(APPEND _yep_host_compiler_args "-DCMAKE_CXX_COMPILER=${YEP_HOST_CXX_COMPILER}")
+        endif()
+
+        ExternalProject_Add(yep_host_tool
+            SOURCE_DIR       "${CMAKE_CURRENT_SOURCE_DIR}"
+            BINARY_DIR       "${_yep_host_dir}/build"
+            CMAKE_ARGS
+                "-DCMAKE_TOOLCHAIN_FILE:FILEPATH="            # drop any inherited/leaked cross toolchain
+                "-DCMAKE_BUILD_TYPE=Release"
+                "-DYEP_BUILD_BIN=ON"
+                "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=${_yep_host_dir}/bin"
+                "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG=${_yep_host_dir}/bin"
+                "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=${_yep_host_dir}/bin"
+                "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO=${_yep_host_dir}/bin"
+                "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL=${_yep_host_dir}/bin"
+                ${_yep_host_compiler_args}
+            BUILD_ALWAYS     ON
+            INSTALL_COMMAND  ""
+            BUILD_BYPRODUCTS "${_yep_host_exe}"
+        )
+
+        set_property(GLOBAL PROPERTY YEP_PACKER_COMMAND "${_yep_host_exe}")
+        set_property(GLOBAL PROPERTY YEP_PACKER_DEPEND yep_host_tool)
+    endif()
 endif()
 
 ###############
